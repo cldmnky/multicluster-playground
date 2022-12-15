@@ -20,9 +20,9 @@ To test: `make skupper-dashboard` and `make kuard-web`
 
 ## Architecture
 
-This demo will setup a three node cluster with an ingress in the "central" cluster, the dc1 and dc2 clusters will be connected using skupper to the central cluster.
+This demo will setup three separate clusters with an ingress in the "central" cluster, the dc1 and dc2 clusters will be connected using skupper to the central cluster.
 
-The central cluster will setup an ingress for the skupper service and load balance to the dc1 and dc2 cluster.
+The central cluster will setup an ingress for the skupper service and load balance to the dc1 and dc2 cluster. The kuard application will be deployed to the dc1 and dc2 clusters only.
 
 <img width="584" alt="image" src="https://user-images.githubusercontent.com/1163462/207819137-cda5cb1e-b3e7-4bc2-a5fe-41221fd15746.png">
 
