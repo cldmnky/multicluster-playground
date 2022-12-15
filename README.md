@@ -24,3 +24,6 @@ This demo will setup a three node cluster with an ingress in the "central" clust
 
 The central cluster will setup an ingress for the skupper service and load balance to the dc1 and dc2 cluster.
 
+<img width="584" alt="image" src="https://user-images.githubusercontent.com/1163462/207819137-cda5cb1e-b3e7-4bc2-a5fe-41221fd15746.png">
+
+
