@@ -94,3 +94,8 @@ setup-skupper:
 skupper-dashboard:
 	@echo "Skupper dashboard"
 	@kubectl --context kind-central -n kuard port-forward services/skupper 8888:8080 & open https://localhost:8888; wait %1
+
+.PHONY: kuard-web
+kuard-web:
+	@echo "Kuard web"
+	@open http://localhost:8080/
