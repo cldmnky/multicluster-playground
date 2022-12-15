@@ -72,21 +72,21 @@ install-kuard:
 .PHONY: setup-skupper
 setup-skupper:
 	@echo "Setting up Skupper"
-	@skupper --context kind-central -n kuard init --site-name central
-	@skupper --context kind-dc1 init -n kuard --site-name dc1
-	@skupper --context kind-dc2 init -n kuard --site-name dc2
+	@$(SKUPPER) --context kind-central -n kuard init --site-name central
+	@$(SKUPPER) --context kind-dc1 init -n kuard --site-name dc1
+	@$(SKUPPER) --context kind-dc2 init -n kuard --site-name dc2
 	@echo "Setup tokens
-	@skupper --context kind-central -n kuard token create --expiry 1h dc1-to-central.token
-	@skupper --context kind-central -n kuard token create --expiry 1h dc2-to-central.token
+	@$(SKUPPER) --context kind-central -n kuard token create --expiry 1h dc1-to-central.token
+	@$(SKUPPER) --context kind-central -n kuard token create --expiry 1h dc2-to-central.token
 	@echo "Connect sites"
-	@skupper --context kind-dc1 -n kuard link create dc1-to-central.token && rm dc1-to-central.token
-	@skupper --context kind-dc2 -n kuard link create dc2-to-central.token && rm dc2-to-central.token
+	@$(SKUPPER) --context kind-dc1 -n kuard link create dc1-to-central.token && rm dc1-to-central.token
+	@$(SKUPPER) --context kind-dc2 -n kuard link create dc2-to-central.token && rm dc2-to-central.token
 	@echo "Create services"
-	@skupper --context kind-dc1 -n kuard service create kuard-skupper 80
-	@skupper --context kind-dc2 -n kuard service create kuard-skupper 80
+	@$(SKUPPER) --context kind-dc1 -n kuard service create kuard-skupper 80
+	@$(SKUPPER) --context kind-dc2 -n kuard service create kuard-skupper 80
 	@echo "Bind services"
-	@skupper --context kind-dc1 -n kuard service bind kuard-skupper service kuard
-	@skupper --context kind-dc2 -n kuard service bind kuard-skupper service kuard
+	@$(SKUPPER) --context kind-dc1 -n kuard service bind kuard-skupper service kuard
+	@$(SKUPPER) --context kind-dc2 -n kuard service bind kuard-skupper service kuard
 	@echo "Expose service in central"
 	@kubectl --context kind-central -n kuard apply -f kuard/expose.yaml
 
@@ -99,3 +99,21 @@ skupper-dashboard:
 kuard-web:
 	@echo "Kuard web"
 	@open http://localhost:8080/
+
+## Location to install dependencies to
+LOCALBIN ?= $(shell pwd)/bin
+$(LOCALBIN):
+	mkdir -p $(LOCALBIN)
+
+## Tool Binaries
+SKUPPER ?= $(LOCALBIN)/skupper
+CALICOCTL ?= $(LOCALBIN)/calicoctl
+
+
+## Tool Versions
+SKUPPER_VERSION ?= 1.2.0
+
+.PHONY: skupper
+skupper: $(SKUPPER) ## Download skupper locally if necessary.
+$(SKUPPER): $(LOCALBIN)
+	test -s $(LOCALBIN)/skupper || GOBIN=$(LOCALBIN) go install github.com/skupperproject/skupper/cmd/skupper@$(SKUPPER_VERSION)
