@@ -1,12 +1,55 @@
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
-  name: kuard
-  labels:
-    app: kuard
+  name: kuard-skupper
 spec:
-  defaultBackend:
-    service:
-      name: kuard-skupper
-      port:
-        number: 80
+  rules:
+  - host: kuard-skupper-127-0-0-1.nip.io
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: kuard-skupper
+            port:
+              number: 80
+  ingressClassName: nginx
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: kuard
+spec:
+  rules:
+  - host: kuard-127-0-0-1.nip.io
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: kuard-external-service
+            port:
+              number: 80
+  ingressClassName: nginx
+---
+kind: Service
+apiVersion: v1
+metadata:
+  name: kuard-external-service
+spec:
+  ports:
+  - protocol: TCP
+    port: 80
+---
+kind: Endpoints
+apiVersion: v1
+metadata:
+  name: kuard-external-service
+subsets:
+- addresses:
+  - ip: 172.18.2.128
+  - ip: 172.18.3.128 
+  ports:
+  - port: 80

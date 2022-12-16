@@ -72,16 +72,16 @@ install-ingress:
 .PHONY: install-kuard
 install-kuard:
 	@echo "=======> Installing Kuard"
-	@kubectl --context kind-central create namespace kuard
-	@kubectl --context kind-dc1 create namespace kuard
+	@kubectl --context kind-central get namespace kuard || kubectl --context kind-central create namespace kuard
+	@kubectl --context kind-dc1 get namespace kuard || kubectl --context kind-dc1 create namespace kuard
+	@kubectl --context kind-dc2 get namespace kuard || kubectl --context kind-dc2 create namespace kuard
 	@kubectl --context kind-dc1 apply -n kuard -f kuard/install-dc1.yaml
-	@kubectl --context kind-dc2 create namespace kuard
 	@kubectl --context kind-dc2 apply -n kuard -f kuard/install-dc2.yaml
 
 .PHONY: setup-skupper
 setup-skupper:
 	@echo "=======> Setting up Skupper"
-	@$(SKUPPER) --context kind-central -n kuard init --site-name central
+	@$(SKUPPER) --context kind-central init -n kuard --site-name central
 	@$(SKUPPER) --context kind-dc1 init -n kuard --site-name dc1
 	@$(SKUPPER) --context kind-dc2 init -n kuard --site-name dc2
 	@echo "=======> Setup tokens"
@@ -105,11 +105,12 @@ setup-submariner:
 	export CENTRAL=$$(kubectl --context kind-central get nodes --field-selector metadata.name=central-control-plane -o=jsonpath='{.items[0].status.addresses[0].address}') && \
 	export DC1=$$(kubectl --context kind-dc1 get nodes --field-selector metadata.name=dc1-control-plane -o=jsonpath='{.items[0].status.addresses[0].address}') && \
 	export DC2=$$(kubectl --context kind-dc2 get nodes --field-selector metadata.name=dc2-control-plane -o=jsonpath='{.items[0].status.addresses[0].address}') && \
-	kubectl --context kind-central -n default run subm --image openshift/origin-cli -- /bin/bash -c "trap : TERM INT; sleep infinity & wait" && \
+	kubectl --context kind-central -n default run subm --image quay.io/openshift/origin-cli:4.12.0 -- /bin/bash -c "trap : TERM INT; sleep infinity & wait" && \
 	kubectl --context kind-central wait --namespace default \
 		--for=condition=ready pod subm \
 		--timeout=90s && \
 	kubectl --context kind-central -n default exec -it subm -- mkdir -p /root/.kube && \
+	kubectl --context kind-central -n default exec -it subm -- rpm -i https://koji.cclinux.org/kojifiles/packages/xz/5.2.4/4.el8_6/x86_64/xz-5.2.4-4.el8_6.x86_64.rpm && \
 	kubectl --context kind-central -n default cp $${KUBECONFIG} subm:/root/.kube/config && \
 	kubectl --context kind-central -n default exec -it subm -- kubectl config set-cluster kind-central --server https://$$CENTRAL:6443/ && \
 	kubectl --context kind-central -n default exec -it subm -- kubectl config set-cluster kind-dc1 --server https://$$DC1:6443/ && \
@@ -118,33 +119,68 @@ setup-submariner:
 	sleep 5 && \
 	kubectl --context kind-central -n default exec -it subm -- kubectl --context kind-dc1 label node dc1-worker submariner.io/gateway=true && \
 	kubectl --context kind-central -n default exec -it subm -- kubectl --context kind-dc2 label node dc2-worker submariner.io/gateway=true && \
+	kubectl --context kind-central -n default exec -it subm -- kubectl --context kind-central label node central-worker submariner.io/gateway=true && \
+	echo "=======> Deploying broker"; \
 	kubectl --context kind-central -n default exec -it subm -- /root/.local/bin/subctl deploy-broker --context kind-central && \
 	kubectl --context kind-central create clusterrole ds-reader --verb=get,list,watch --resource=daemonsets && \
 	kubectl --context kind-central create clusterrolebinding --clusterrole=ds-reader --serviceaccount submariner-operator:submariner-operator submariner-ds && \
+	kubectl --context kind-central -n submariner-operator delete pods -l name=submariner-operator && \
 	sleep 5 && \
+	echo "=======> Joining clusters"; \
+	echo "=======> Joining dc1"; \
 	kubectl --context kind-central -n default exec -it subm -- /root/.local/bin/subctl join --context kind-dc1 broker-info.subm --clusterid kind-dc1 --natt=false && \
 	kubectl --context kind-dc1 create clusterrole ds-reader --verb=get,list,watch --resource=daemonsets && \
 	kubectl --context kind-dc1 create clusterrolebinding --clusterrole=ds-reader --serviceaccount submariner-operator:submariner-operator submariner-ds && \
-	kubectl --context kind-dc2 -n submariner-operator delete pods -l name=submariner-operator && \
+	kubectl --context kind-dc1 -n submariner-operator delete pods -l name=submariner-operator && \
+	echo "=======> Joining dc2"; \
 	kubectl --context kind-central -n default exec -it subm -- /root/.local/bin/subctl join --context kind-dc2 broker-info.subm --clusterid kind-dc2 --natt=false && \
 	kubectl --context kind-dc2 create clusterrole ds-reader --verb=get,list,watch --resource=daemonsets && \
 	kubectl --context kind-dc2 create clusterrolebinding --clusterrole=ds-reader --serviceaccount submariner-operator:submariner-operator submariner-ds && \
 	kubectl --context kind-dc2 -n submariner-operator delete pods -l name=submariner-operator && \
+	echo "=======> Joining central"; \
+	kubectl --context kind-central -n default exec -it subm -- /root/.local/bin/subctl join --context kind-central broker-info.subm --clusterid kind-central --natt=false && \
 	sleep 5 && \
 	kubectl --context kind-central -n default exec -it subm -- /root/.local/bin/subctl --context kind-central show all
-	#kubectl --context kind-central -n default exec -it subm -- /root/.local/bin/subctl --context kind-dc1 export service --namespace ingress-nginx ingress-nginx-controller
-	#kubectl --context kind-central -n default exec -it subm -- /root/.local/bin/subctl --context kind-dc2 export service --namespace ingress-nginx ingress-nginx-controller
 	
+.PHONY: delete-submariner
+delete-submariner:
+	@echo "=======> Deleting submariner"
+	@kubectl --context kind-central -n default delete pod subm
+	@for i in central dc1 dc2; do \
+		kubectl --context kind-$$i delete clusterrole ds-reader; \
+		kubectl --context kind-$$i delete clusterrolebinding submariner-ds; \
+		kubectl --context kind-$$i delete ns submariner-operator; \
+	done
 
 .PHONY: skupper-dashboard
 skupper-dashboard:
 	@echo "=======> Skupper dashboard"
+	@echo -n "Console login: admin "; kubectl --context kind-central get secrets -n kuard skupper-console-users -o go-template='{{ .data.admin }}'| base64 -d && echo
 	@kubectl --context kind-central -n kuard port-forward services/skupper 8888:8080 & open https://localhost:8888; wait %1
 
 .PHONY: kuard-web
 kuard-web:
 	@echo "=======> Kuard web"
-	@open http://localhost:8080/
+	@open http://kuard-127-0-0-1.nip.io:8080/-/env
+	@open http://kuard-skupper-127-0-0-1.nip.io:8080/-/env
+
+.PHONY: loadtest-ingress
+loadtest-ingress:
+	@echo "=======> Load test (ingress)"
+	@echo "=======> Load test: kuard-127-0-0-1.nip.io:8080 (no faults)"
+	@$(K6) run --env SKIP_FAULTS=1 --env HOST=kuard-127-0-0-1.nip.io:8080 loadtest/loadtest.js
+	@echo "=======> Load test: kuard-127-0-0-1.nip.io:8080 (faults)"
+	@kubectl config use-context kind-dc1
+	@$(K6) run --env SKIP_FAULTS=0 --env HOST=kuard-127-0-0-1.nip.io:8080 loadtest/loadtest.js
+
+.PHONY: loadtest-skupper
+loadtest-skupper:
+	@echo "=======> Load test (skupper)"
+	@echo "=======> Load test: kuard-skupper-127-0-0-1.nip.io:8080 (no faults)"
+	@$(K6) run --env SKIP_FAULTS=1 --env HOST=kuard-skupper-127-0-0-1.nip.io:8080 loadtest/loadtest.js
+	@echo "=======> Load test: kuard-skupper-127-0-0-1.nip.io:8080 (faults)"
+	@kubectl config use-context kind-dc2
+	@$(K6) run --env SKIP_FAULTS=0 --env HOST=kuard-skupper-127-0-0-1.nip.io:8080 loadtest/loadtest.js
 
 ## Location to install dependencies to
 LOCALBIN ?= $(shell pwd)/bin
@@ -153,13 +189,25 @@ $(LOCALBIN):
 
 ## Tool Binaries
 SKUPPER ?= $(LOCALBIN)/skupper
-CALICOCTL ?= $(LOCALBIN)/calicoctl
-
+K6 ?= $(LOCALBIN)/k6
 
 ## Tool Versions
 SKUPPER_VERSION ?= 1.2.0
+K6_VERSION ?= v0.1.1
+
+## Tool helpers
+ARCH := $(shell go env GOARCH)
+OS := $(shell go env GOOS)
 
 .PHONY: skupper
 skupper: $(SKUPPER) ## Download skupper locally if necessary.
 $(SKUPPER): $(LOCALBIN)
 	test -s $(LOCALBIN)/skupper || GOBIN=$(LOCALBIN) go install github.com/skupperproject/skupper/cmd/skupper@$(SKUPPER_VERSION)
+
+.PHONY: k6
+k6: $(K6) ## Download k6 locally if necessary.
+$(K6): $(LOCALBIN)
+	@test -s $(LOCALBIN)/k6 || (curl -SS https://github.com/grafana/xk6-disruptor/releases/download/$(K6_VERSION)/xk6-disruptor-$(K6_VERSION)-$(OS)-$(ARCH).tar.gz -L -o  $(LOCALBIN)/xk6-disruptor.tar.gz && \
+		tar -C $(LOCALBIN) -xzf $(LOCALBIN)/xk6-disruptor.tar.gz && \
+		rm $(LOCALBIN)/xk6-disruptor.tar.gz && \
+		mv $(LOCALBIN)/xk6-disruptor-$(OS)-$(ARCH) $(LOCALBIN)/k6)
